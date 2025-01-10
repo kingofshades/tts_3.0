@@ -69,7 +69,7 @@ def main():
     usage_data = load_usage(usage_path)
 
     # 3) Upload CSV
-    st.sidebar.markdown("## Upload Program Road-Map File")
+    st.sidebar.markdown("## Upload Program Road-Map")
     file = st.sidebar.file_uploader(
         "Upload CSV (semester, course_code, course_name, is_lab, times_needed)",
         type=["csv"]
