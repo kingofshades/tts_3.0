@@ -1,0 +1,46 @@
+semester,course_code,course_name,is_lab,times_needed
+1,CC1021,Programming Fundamentals,FALSE,3
+1,CC1021L,Programming Fundamentals Lab,TRUE,1
+1,MA100,Calculus and Analytical Geometry (Calculus 1),FALSE,3
+1,IT1091,Introduction to ICT,FALSE,2
+1,IT1091L,Introduction to ICT Lab,TRUE,1
+1,EN111,English Grammar and Comprehension,FALSE,3
+1,ISL101,Islamic Studies,FALSE,3
+2,EN125,Communication & Presentation Skills,FALSE,3
+2,CS2031,Digital Logic Design,FALSE,3
+2,CS2031L,Digital Logic Design Lab,TRUE,1
+2,CC1022,Object Oriented Programming,FALSE,3
+2,CC1022L,Object Oriented Programming Lab,TRUE,1
+2,MA150,Probability & Statistics,FALSE,3
+2,CC1041,Discrete Structures,FALSE,3
+3,CC2042,Data Structures and Algorithms,FALSE,3
+3,CC2042L,Data Structures and Algorithms Lab,TRUE,1
+3,POL101,Pakistan Studies,FALSE,3
+3,DS2136,Introduction to Data Science,FALSE,3
+3,CC3071,Computer Networks,FALSE,3
+3,CC3071L,Computer Networks Lab,TRUE,1
+3,MA210,Linear Algebra,FALSE,3
+4,CC2141,Database Systems,FALSE,3
+4,CC2141L,Database Systems Lab,TRUE,1
+4,CS2032,Computer Organization and Assembly Language,FALSE,3
+4,CS2032L,Computer Organization and Assembly Language Lab,TRUE,1
+4,EN220,Technical & Business Writing,FALSE,3
+4,MA230,Differential Equations,FALSE,3
+4,CS3151,Artificial Intelligence,FALSE,3
+4,CS3151L,Artificial Intelligence Lab,TRUE,1
+5,CC3011,Operating Systems,FALSE,3
+5,CC3011L,Operating Systems Lab,TRUE,1
+5,CS458,Data Mining,FALSE,3
+5,DS3052,Advance Statistics,FALSE,3
+6,HU4092,Professional Practices,FALSE,3
+6,CC2101,Software Engineering,FALSE,3
+6,DS3137,Data Warehousing & Business Intelligence,FALSE,3
+7,DS3139,Data Visualization,FALSE,3
+7,CS4172,Parallel and Distributed Computing,FALSE,3
+7,CS4134,Big Data Analytics,FALSE,3
+7,CS3044,Analysis of Algorithms,FALSE,3
+7,SD100,English Immersion,FALSE,0
+7,CC491,Final Year Project I,FALSE,3
+8,CC492,Final Year Project II,FALSE,3
+8,CS3121,Information Security,FALSE,3
+8,SD101,21st Century Skills,FALSE,0
