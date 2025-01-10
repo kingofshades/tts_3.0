@@ -17,7 +17,7 @@ from scheduling.utils import (
 
 
 def main():
-    st.title("Timetable Scheduler (Refactored & Bugfixed)")
+    st.title("UMT Timetable Scheduler")
 
     # Basic config
     DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
