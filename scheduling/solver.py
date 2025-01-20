@@ -15,38 +15,35 @@ def schedule_timetable(
     LAB_OVERLAP_MAP,
     theory_rooms,
     lab_rooms,           # all labs from CSV (including special)
-    special_lab_rooms,   # e.g. { "NS125L": ["PhysicsLab1","PhysicsLab2"], "CC121L": ["DLDLab1","DLDLab2"] }
-    section_size=50
+    special_lab_rooms,   # e.g. { "NS125L": ["PhysicsLab1","PhysicsLab2"], ... }
+    section_size=50,
+    program_code="A"     # NEW: default program code
 ):
     """
     Returns (schedule_map, semester_sections_map, new_allocations) or None if infeasible.
+
     new_allocations: list of (rtype, room_name, day, slot, occupant_label)
+
+    This function sets up the CP-SAT model and solves it. 
     """
 
     # ------------------------------------------------------------
     # 1) Distinguish normal vs. special labs
     # ------------------------------------------------------------
-    # Gather all labs from 'special_lab_rooms'
     all_special_labs = set()
     for slist in special_lab_rooms.values():
         for labn in slist:
-            # Make sure to strip() the name in case CSV has trailing spaces
             all_special_labs.add(labn.strip())
 
-    # Convert the input lab_rooms to a stripped list (remove trailing spaces)
     lab_rooms = [lr.strip() for lr in lab_rooms]
-
-    # normal_labs = any lab in lab_rooms that isn't in all_special_labs
     normal_labs = [lr for lr in lab_rooms if lr not in all_special_labs]
 
-    # We'll combine them for capacity checks, but never for assignment of normal-lab courses
-    combined_labs = set(normal_labs)
-    for sl in all_special_labs:
-        combined_labs.add(sl)
+    # combined_labs = union of normal + special labs
+    combined_labs = set(normal_labs) | all_special_labs
     combined_labs = list(combined_labs)
 
     # ------------------------------------------------------------
-    # 2) Basic usage count for capacity
+    # 2) Basic usage count for capacity (existing usage)
     # ------------------------------------------------------------
     theory_used = 0
     for r in usage_data["theory"]:
@@ -73,28 +70,29 @@ def schedule_timetable(
             else:
                 needed_theory += times_needed
 
+    # Quick check for total capacity shortfall:
     if needed_theory > available_theory:
         raise ValueError(
-            f"Not enough free theory slots. Need={needed_theory}, Have={available_theory}."
+            f"Not enough free THEORY slots. Need={needed_theory}, Have={available_theory}."
         )
     if needed_lab > available_lab:
         raise ValueError(
-            f"Not enough free lab slots. Need={needed_lab}, Have={available_lab}."
+            f"Not enough free LAB slots. Need={needed_lab}, Have={available_lab}."
         )
 
     # ------------------------------------------------------------
-    # 3) Build sections
+    # 3) Build sections (with program_code)
     # ------------------------------------------------------------
     semester_sections_map2 = {}
     all_sections = []
     for sem in selected_semesters:
         n_students = section_sizes[sem]
-        secs = build_sections_for_semester(sem, n_students, section_size)
+        secs = build_sections_for_semester(sem, n_students, section_size, program_code)
         semester_sections_map2[sem] = secs
         all_sections.extend(secs)
 
     # ------------------------------------------------------------
-    # 4) Create model & variables
+    # 4) Create model & define assignment variables
     # ------------------------------------------------------------
     model = cp_model.CpModel()
     assignments = {}
@@ -110,19 +108,17 @@ def schedule_timetable(
                         f"day_{section}_{code}_{day}"
                     )
 
+                # Lab assignments
                 if is_lab:
-                    # If code is "special-lab" => only special labs from dictionary
                     if code in special_lab_rooms:
-                        # e.g. ["PhysicsLab1","PhysicsLab2"]
                         valid_labs = [x.strip() for x in special_lab_rooms[code]]
                     else:
-                        # normal-lab code => only normal_labs (excludes PhysicsLab1,2, DLDLab1,2, etc.)
                         valid_labs = normal_labs
 
-                    # Create bool vars only if usage not preoccupied
                     for day in DAYS:
                         for lslot in LAB_SLOTS:
                             for labr in valid_labs:
+                                # skip if pre-used
                                 preused = usage_data["lab"].get(labr, {}).get(day, [])
                                 if lslot in preused:
                                     continue
@@ -130,12 +126,12 @@ def schedule_timetable(
                                 assignments[key] = model.NewBoolVar(
                                     f"LabVar_{section}_{code}_{day}_{lslot}_{labr}"
                                 )
-
                 else:
-                    # theory
+                    # Theory assignments
                     for day in DAYS:
                         for t in THEORY_TIMESLOTS:
                             for r in theory_rooms:
+                                # skip if pre-used
                                 preused = usage_data["theory"].get(r, {}).get(day, [])
                                 if t in preused:
                                     continue
@@ -177,7 +173,7 @@ def schedule_timetable(
                     model.Add(sum(th_vars) == times_needed)
 
     # ------------------------------------------------------------
-    # 6) Distinct-day for theory (unchanged)
+    # 6) Distinct-day for theory courses
     # ------------------------------------------------------------
     for sem in selected_semesters:
         for section in semester_sections_map2[sem]:
@@ -192,11 +188,9 @@ def schedule_timetable(
                             if key in assignments:
                                 relevant_vars.append(assignments[key])
                     model.Add(sum(relevant_vars) >= day_assigned[(section, code, day)])
-                    model.Add(sum(relevant_vars) <= len(THEORY_TIMESLOTS)*day_assigned[(section, code, day)])
-
-                model.Add(
-                    sum(day_assigned[(section, code, d)] for d in DAYS) == times_needed
-                )
+                    model.Add(sum(relevant_vars) <= len(THEORY_TIMESLOTS) * day_assigned[(section, code, day)])
+                # total distinct days = times_needed
+                model.Add(sum(day_assigned[(section, code, d)] for d in DAYS) == times_needed)
 
     # ------------------------------------------------------------
     # 7) No double-booking theory room
@@ -217,9 +211,16 @@ def schedule_timetable(
     # ------------------------------------------------------------
     # 8) No double-booking lab room
     # ------------------------------------------------------------
+    # combine normal + special labs:
+    combined_labs = set(lab_rooms)
+    for slist in special_lab_rooms.values():
+        for lb in slist:
+            combined_labs.add(lb)
+    combined_labs = list(combined_labs)
+
     for day in DAYS:
         for ls in LAB_SLOTS:
-            for labr in combined_labs:  # includes normal + special labs
+            for labr in combined_labs:
                 model.Add(
                     sum(
                         assignments.get((sec, c, day, ls, labr), 0)
@@ -231,11 +232,11 @@ def schedule_timetable(
                 )
 
     # ------------------------------------------------------------
-    # 9) Prevent same-section clashes
+    # 9) Prevent same-section clashes (theory vs. lab overlap)
     # ------------------------------------------------------------
     for sec in all_sections:
         for day in DAYS:
-            # (a) only one theory timeslot
+            # (a) only one theory timeslot that day
             for t in THEORY_TIMESLOTS:
                 model.Add(
                     sum(
@@ -247,7 +248,7 @@ def schedule_timetable(
                     ) <= 1
                 )
 
-            # (b) only one lab slot
+            # (b) only one lab slot that day
             for ls in LAB_SLOTS:
                 model.Add(
                     sum(
@@ -259,7 +260,7 @@ def schedule_timetable(
                     ) <= 1
                 )
 
-            # (c) partial overlap (lab vs. theory)
+            # (c) partial overlap constraints (lab vs. theory)
             for sem2 in selected_semesters:
                 for (c, cname, lab, tn) in semester_courses_map[sem2]:
                     if not lab:
@@ -289,7 +290,7 @@ def schedule_timetable(
         return None
 
     # ------------------------------------------------------------
-    # 11) Build final schedule
+    # 11) Build final schedule & new allocations
     # ------------------------------------------------------------
     schedule_map = {}
     new_allocations = []
@@ -302,13 +303,12 @@ def schedule_timetable(
                     for day in DAYS:
                         for t in THEORY_TIMESLOTS:
                             for r in theory_rooms:
-                                key = (sec, code, day, t, r)
-                                var = assignments.get(key)
+                                var = assignments.get((sec, code, day, t, r))
                                 if var is not None and solver.Value(var) == 1:
                                     schedule_map[(day, t, r)] = (sec, code)
                                     new_allocations.append(("theory", r, day, t, occupant))
                 else:
-                    # special-lab or normal-lab
+                    # lab
                     if code in special_lab_rooms:
                         valid_labs = [x.strip() for x in special_lab_rooms[code]]
                     else:
