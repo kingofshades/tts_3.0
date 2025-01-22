@@ -14,7 +14,7 @@ Welcome to the **UMT Timetable Scheduler**! This project helps you merge usage d
 
 First, clone the repository:
 ```sh
-git clone https://github.com/yourusername/umt-timetable-scheduler.git
+git clone https://github.com/kingofshades/UMT_TIMETABLE_SCHEDULER.git
 cd umt-timetable-scheduler
 ```
 
