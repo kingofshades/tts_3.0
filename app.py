@@ -19,8 +19,9 @@ from scheduling.utils import (
     export_timetables_to_excel
 )
 
+
 def main():
-    st.title("UMT Timetable Scheduler (Merging Usage Data + Excel Rooms)")
+    st.title("UMT Timetable Scheduler")
 
     # Basic config for your schedule
     DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
@@ -52,31 +53,15 @@ def main():
         3: [6]
     }
 
-    # Helper function: how many free slots remain for a given room based on usage_data
-    def get_free_slot_count(rtype: str, room_name: str) -> int:
-        """Return how many free timeslots remain for this room_name of rtype (theory|lab) 
-           given the usage_data. Theory rooms have 42 total, labs have 24 total."""
-        if rtype == "theory":
-            total_slots = len(DAYS) * len(THEORY_TIMESLOTS)  # 42
-            used = 0
-            if room_name in usage_data["theory"]:
-                for day in usage_data["theory"][room_name]:
-                    used += len(usage_data["theory"][room_name][day])
-            return total_slots - used
-        else:
-            total_slots = len(DAYS) * len(LAB_SLOTS)  # 24
-            used = 0
-            if room_name in usage_data["lab"]:
-                for day in usage_data["lab"][room_name]:
-                    used += len(usage_data["lab"][room_name][day])
-            return total_slots - used
-
     # 1) Sidebar: Reset usage
     st.sidebar.subheader("Usage Data")
     if st.sidebar.button("Reset Usage Data"):
         reset_usage(os.path.join("data", "usage_data.json"))
+        # Also clear session state so we re-init rooms
+        st.session_state.pop("theory_rooms_current", None)
+        st.session_state.pop("lab_rooms_current", None)
         st.warning("Usage data has been reset. Please reload or re-run.")
-        return
+        st.stop()
 
     # 2) Upload Excel
     st.sidebar.subheader("Upload Excel")
@@ -93,74 +78,91 @@ def main():
     # 3) Load usage data
     usage_data = load_usage(os.path.join("data", "usage_data.json"))
 
-    # 3a) Merge rooms from usage_data + Excel
-    #    (the usage_data might have rooms not in Excel, or vice versa)
-    usage_theory_rooms = set(usage_data["theory"].keys())  # from JSON
-    usage_lab_rooms = set(usage_data["lab"].keys())
+    # 3a) On first load (or if the user re-uploads a new Excel), initialize session lists
+    #     so we have a "current" set of rooms for this scheduling session.
+    if "theory_rooms_current" not in st.session_state or "lab_rooms_current" not in st.session_state:
+        # Merge sets from usage_data and Excel
+        usage_theory_rooms = set(usage_data["theory"].keys())
+        usage_lab_rooms = set(usage_data["lab"].keys())
 
-    # unify sets
-    all_theory_rooms = set(excel_theory_rooms) | usage_theory_rooms
-    all_lab_rooms = set(excel_lab_rooms) | usage_lab_rooms
+        merged_theory_rooms = list(set(excel_theory_rooms) | usage_theory_rooms)
+        merged_lab_rooms = list(set(excel_lab_rooms) | usage_lab_rooms)
 
-    # Now convert them back to lists
-    all_theory_rooms = list(all_theory_rooms)
-    all_lab_rooms = list(all_lab_rooms)
+        # Store in session so that removing/adding persists across re-runs
+        st.session_state["theory_rooms_current"] = merged_theory_rooms
+        st.session_state["lab_rooms_current"] = merged_lab_rooms
 
-    # 4) Remove existing rooms if not needed
+    # For convenience, define local references
+    current_theory_rooms = st.session_state["theory_rooms_current"]
+    current_lab_rooms = st.session_state["lab_rooms_current"]
+
+    # 4) Remove existing rooms if not needed (only for this generation)
     st.sidebar.subheader("Remove Existing Rooms")
-    theory_remove = st.sidebar.multiselect("Remove Theory Rooms", all_theory_rooms)
-    lab_remove = st.sidebar.multiselect("Remove Lab Rooms", all_lab_rooms)
+    theory_remove = st.sidebar.multiselect("Remove Theory Rooms", current_theory_rooms)
+    lab_remove = st.sidebar.multiselect("Remove Lab Rooms", current_lab_rooms)
     if st.sidebar.button("Remove Selected Rooms"):
+        # We remove them from our session-based lists only
         for r in theory_remove:
-            if r in all_theory_rooms:
-                all_theory_rooms.remove(r)
-                st.sidebar.success(f"Theory room '{r}' removed.")
-                # Also remove from usage_data if present
-                if r in usage_data["theory"]:
-                    usage_data["theory"].pop(r, None)
-        for r in lab_remove:
-            if r in all_lab_rooms:
-                all_lab_rooms.remove(r)
-                st.sidebar.success(f"Lab room '{r}' removed.")
-                if r in usage_data["lab"]:
-                    usage_data["lab"].pop(r, None)
-        # Save usage_data after removal
-        save_usage(os.path.join("data", "usage_data.json"), usage_data)
+            if r in current_theory_rooms:
+                current_theory_rooms.remove(r)
+                st.sidebar.success(f"Theory room '{r}' removed (for this generation).")
 
-    # 5) Add new rooms dynamically
+        for r in lab_remove:
+            if r in current_lab_rooms:
+                current_lab_rooms.remove(r)
+                st.sidebar.success(f"Lab room '{r}' removed (for this generation).")
+
+        # We do *not* remove them from usage_data, so their usage persists in JSON.
+
+    # 5) Add new rooms dynamically (and add them to usage_data so they persist)
     st.sidebar.subheader("Add a New Room")
     new_room_name = st.sidebar.text_input("Room Name", "")
     new_room_type = st.sidebar.selectbox("Room Type", ["theory","lab"])
     if st.sidebar.button("Add Room"):
         if new_room_name.strip():
             if new_room_type == "theory":
-                if new_room_name not in all_theory_rooms:
-                    all_theory_rooms.append(new_room_name)
+                if new_room_name not in current_theory_rooms:
+                    current_theory_rooms.append(new_room_name)
                     st.sidebar.success(f"Theory room '{new_room_name}' added!")
+                    # Ensure usage_data is updated and saved
+                    if new_room_name not in usage_data["theory"]:
+                        usage_data["theory"][new_room_name] = {}
+                        save_usage(os.path.join("data", "usage_data.json"), usage_data)
                 else:
                     st.sidebar.error(f"Theory room '{new_room_name}' already exists.")
-            else:
-                if new_room_name not in all_lab_rooms:
-                    all_lab_rooms.append(new_room_name)
+            else:  # new_room_type == "lab"
+                if new_room_name not in current_lab_rooms:
+                    current_lab_rooms.append(new_room_name)
                     st.sidebar.success(f"Lab room '{new_room_name}' added!")
+                    # Ensure usage_data is updated and saved
+                    if new_room_name not in usage_data["lab"]:
+                        usage_data["lab"][new_room_name] = {}
+                        save_usage(os.path.join("data", "usage_data.json"), usage_data)
                 else:
                     st.sidebar.error(f"Lab room '{new_room_name}' already exists.")
         else:
             st.sidebar.error("Please enter a valid room name.")
 
-    # 6) Filter out rooms with 0 free slots
-    #    so we only schedule with rooms that still have availability
-    filtered_theory_rooms = []
-    for r in all_theory_rooms:
-        free = get_free_slot_count("theory", r)
-        if free > 0:
-            filtered_theory_rooms.append(r)
+    # Helper function to count free slots
+    def get_free_slot_count(rtype: str, room_name: str) -> int:
+        if rtype == "theory":
+            total_slots = len(DAYS) * len(THEORY_TIMESLOTS)  # 42
+            used = 0
+            if room_name in usage_data["theory"]:
+                for day in usage_data["theory"][room_name]:
+                    used += len(usage_data["theory"][room_name][day])
+            return total_slots - used
+        else:
+            total_slots = len(DAYS) * len(LAB_SLOTS)  # 24
+            used = 0
+            if room_name in usage_data["lab"]:
+                for day in usage_data["lab"][room_name]:
+                    used += len(usage_data["lab"][room_name][day])
+            return total_slots - used
 
-    filtered_lab_rooms = []
-    for r in all_lab_rooms:
-        free = get_free_slot_count("lab", r)
-        if free > 0:
-            filtered_lab_rooms.append(r)
+    # 6) Now filter out rooms that have > 0 free slots
+    filtered_theory_rooms = [r for r in current_theory_rooms if get_free_slot_count("theory", r) > 0]
+    filtered_lab_rooms = [r for r in current_lab_rooms if get_free_slot_count("lab", r) > 0]
 
     # 7) Show the "current rooms" that actually have free slots
     st.write("### Current Rooms (with > 0 free slots)")
@@ -213,15 +215,8 @@ def main():
                     total_needed_theory_slots += (times_needed * section_count)
 
         # (B) Calculate how many free slots we have in the filtered rooms
-        #     Because those are the only rooms we are scheduling with.
-        #     Sum the free slots across all filtered theory rooms
-        free_theory_cap = 0
-        for r in filtered_theory_rooms:
-            free_theory_cap += get_free_slot_count("theory", r)
-
-        free_lab_cap = 0
-        for r in filtered_lab_rooms:
-            free_lab_cap += get_free_slot_count("lab", r)
+        free_theory_cap = sum(get_free_slot_count("theory", r) for r in filtered_theory_rooms)
+        free_lab_cap = sum(get_free_slot_count("lab", r) for r in filtered_lab_rooms)
 
         # Compare
         if total_needed_theory_slots > free_theory_cap:
@@ -250,23 +245,22 @@ def main():
 
         # (C) If feasible, proceed to the solver
         with st.spinner("Scheduling..."):
-            from scheduling.solver import schedule_timetable
             try:
                 result = schedule_timetable(
                     selected_semesters=selected_semesters,
                     semester_courses_map=semester_courses_map,
                     section_sizes=final_capacities,
-                    usage_data=load_usage(os.path.join("data", "usage_data.json")),  # fresh load
+                    # Fresh load usage data
+                    usage_data=load_usage(os.path.join("data", "usage_data.json")),
                     DAYS=DAYS,
                     THEORY_TIMESLOTS=THEORY_TIMESLOTS,
                     TIMESLOT_LABELS=TIMESLOT_LABELS,
                     LAB_SLOTS=LAB_SLOTS,
                     LAB_SLOT_LABELS=LAB_SLOT_LABELS,
                     LAB_OVERLAP_MAP=LAB_OVERLAP_MAP,
-                    theory_rooms=filtered_theory_rooms,   # Only pass rooms that have free slots
+                    theory_rooms=filtered_theory_rooms,   # only the filtered
                     lab_rooms=filtered_lab_rooms,
                     special_lab_rooms={
-                        # Hard-coded example
                         "NS125L": ["PhysicsLab1", "PhysicsLab2"],
                         "CC121L": ["DLDLab1", "DLDLab2"]
                     },
@@ -284,7 +278,7 @@ def main():
         schedule_map, semester_sections_map, new_allocs = result
         st.success("Timetable generated successfully!")
 
-        # (D) Update usage data
+        # (D) Update usage data with new allocations
         usage_data_current = load_usage(os.path.join("data", "usage_data.json"))
         for (rtype, rname, day, slot, occupant) in new_allocs:
             usage_data_current.setdefault(rtype, {})
@@ -322,7 +316,6 @@ def main():
             courses = semester_courses_map[sem]
             for sec_name in sec_list:
                 st.write(f"**Section {sec_name}**")
-                from scheduling.utils import build_section_dataframe
                 df_sec = build_section_dataframe(
                     section_name=sec_name,
                     courses=courses,
@@ -343,30 +336,26 @@ def main():
 
         # (G) Room usage & remaining capacity
         st.header("Room Usage & Remaining Capacity")
-        # Summaries
         summary_rows = []
-        # re-load final usage
         final_usage = load_usage(os.path.join("data", "usage_data.json"))
 
-        # For theory rooms (filtered or not?)
-        # We'll focus on those we used in scheduling => filtered_theory_rooms
-        for r in (filtered_theory_rooms):
+        for r in filtered_theory_rooms:
             used_count = 0
             if r in final_usage["theory"]:
                 for day in final_usage["theory"][r]:
                     used_count += len(final_usage["theory"][r][day])
-            free_count = (len(DAYS) * len(THEORY_TIMESLOTS)) - used_count
-            summary_rows.append([r, "Theory", used_count, free_count, (len(DAYS) * len(THEORY_TIMESLOTS))])
+            total_slots = len(DAYS) * len(THEORY_TIMESLOTS)
+            free_count = total_slots - used_count
+            summary_rows.append([r, "Theory", used_count, free_count, total_slots])
 
-        # For lab
-        # You might also unify special labs here if you want to display them too
-        for r in (filtered_lab_rooms):
+        for r in filtered_lab_rooms:
             used_count = 0
             if r in final_usage["lab"]:
                 for day in final_usage["lab"][r]:
                     used_count += len(final_usage["lab"][r][day])
-            free_count = (len(DAYS) * len(LAB_SLOTS)) - used_count
-            summary_rows.append([r, "Lab", used_count, free_count, (len(DAYS) * len(LAB_SLOTS))])
+            total_slots = len(DAYS) * len(LAB_SLOTS)
+            free_count = total_slots - used_count
+            summary_rows.append([r, "Lab", used_count, free_count, total_slots])
 
         df_summary = pd.DataFrame(summary_rows, columns=["Room","Type","Used Slots","Free Slots","Total Slots"])
         st.write("### Summary of Room Usage")
@@ -377,14 +366,12 @@ def main():
         df_summary.to_excel(writer_usage, sheet_name="Summary", index=False)
 
         st.subheader("Detailed Room Usage")
-        from scheduling.utils import build_room_usage_df
-        # Theory usage
         for rr in filtered_theory_rooms:
             st.write(f"**Room: {rr} (Theory)**")
             df_tr = build_full_room_usage_df(
                 room=rr,
                 rtype="theory",
-                usage_data=final_usage,  # or load_usage(...) to be sure
+                usage_data=final_usage,
                 schedule_map=schedule_map,
                 DAYS=DAYS,
                 THEORY_TIMESLOTS=THEORY_TIMESLOTS,
@@ -395,7 +382,6 @@ def main():
             st.table(df_tr)
             df_tr.to_excel(writer_usage, sheet_name=f"{rr[:20]}_Usage", index=True)
 
-        # Lab usage
         for lb in filtered_lab_rooms:
             st.write(f"**Lab: {lb}**")
             df_lb = build_full_room_usage_df(
@@ -409,7 +395,6 @@ def main():
                 TIMESLOT_LABELS=TIMESLOT_LABELS,
                 LAB_SLOT_LABELS=LAB_SLOT_LABELS
             )
-
             st.table(df_lb)
             df_lb.to_excel(writer_usage, sheet_name=f"{lb[:20]}_Usage", index=True)
 
@@ -424,6 +409,7 @@ def main():
         2) Choose your new semesters or the same ones with a new Program Code.  
         3) Generate Timetable. The solver will see leftover free slots from the previous schedule.
         """)
+
 
 if __name__ == "__main__":
     main()
