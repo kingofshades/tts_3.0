@@ -28,22 +28,23 @@ def reset_usage(json_path: str):
     empty_data = {"theory": {}, "lab": {}}
     save_usage(json_path, empty_data)
 
-def parse_single_excel(file) -> (dict, list, list, dict):
+def parse_single_excel(file):
     """
     Reads a single Excel with these sheets:
       - 'Roadmap' => columns: semester, course_code, course_name, is_lab, times_needed
       - 'Rooms' => columns: room_name, room_type
       - 'StudentCapacity' => columns: semester, student_count
+      - 'Electives' (optional) => columns: 
+          [elective_code, elective_name, elective_type, sections_count, can_use_theory, can_use_lab]
 
-    Returns:
-      - semester_courses_map (dict[sem -> list[(code, cname, is_lab, times_needed)]])
-      - theory_rooms (list[str])
-      - lab_rooms (list[str])
-      - student_capacities (dict[sem -> int])
+    Returns a tuple:
+      semester_courses_map, theory_rooms, lab_rooms, student_capacities, electives_list
     """
     xls = pd.ExcelFile(file)
 
+    # -------------------------------
     # 1) Roadmap
+    # -------------------------------
     df_roadmap = pd.read_excel(xls, "Roadmap")
     semester_courses_map = {}
     for _, row in df_roadmap.iterrows():
@@ -56,7 +57,9 @@ def parse_single_excel(file) -> (dict, list, list, dict):
             semester_courses_map[sem] = []
         semester_courses_map[sem].append((code, cname, is_lab, times_needed))
 
+    # -------------------------------
     # 2) Rooms
+    # -------------------------------
     df_rooms = pd.read_excel(xls, "Rooms")
     theory_rooms = []
     lab_rooms = []
@@ -68,12 +71,11 @@ def parse_single_excel(file) -> (dict, list, list, dict):
         else:
             lab_rooms.append(rname)
 
+    # -------------------------------
     # 3) StudentCapacity
+    # -------------------------------
     df_cap = pd.read_excel(xls, "StudentCapacity")
-
-    # handle minor variations in casing/spaces
     df_cap.columns = df_cap.columns.str.lower().str.strip()
-
     if "semester" not in df_cap.columns or "student_count" not in df_cap.columns:
         raise ValueError("StudentCapacity sheet must have 'semester' and 'student_count' columns.")
 
@@ -82,4 +84,38 @@ def parse_single_excel(file) -> (dict, list, list, dict):
         sem = int(row["semester"])
         student_capacities[sem] = int(row["student_count"])
 
-    return semester_courses_map, theory_rooms, lab_rooms, student_capacities
+    # -------------------------------
+    # 4) Electives (optional)
+    # -------------------------------
+    electives_list = []
+    if "Electives" in xls.sheet_names:
+        df_elec = pd.read_excel(xls, "Electives")
+        # Clean up column names
+        df_elec.columns = df_elec.columns.str.lower().str.strip()
+
+        # For each row, collect the info
+        for _, row in df_elec.iterrows():
+            e_code = str(row["elective_code"]).strip()
+            e_name = str(row["elective_name"]).strip()
+            e_type = str(row["elective_type"]).strip()
+            e_sections = int(row["sections_count"])
+
+            # If columns are missing, default them to True
+            can_theory = True
+            can_lab = True
+            if "can_use_theory" in df_elec.columns:
+                can_theory = str(row["can_use_theory"]).lower() == "true"
+            if "can_use_lab" in df_elec.columns:
+                can_lab = str(row["can_use_lab"]).lower() == "true"
+
+            # Build a tuple
+            electives_list.append({
+                "code": e_code,
+                "name": e_name,
+                "etype": e_type,
+                "sections_count": e_sections,
+                "can_theory": can_theory,
+                "can_lab": can_lab
+            })
+
+    return semester_courses_map, theory_rooms, lab_rooms, student_capacities, electives_list
